@@ -216,6 +216,38 @@
     color:#6b6558;
     margin-right:4px;
   }
+  .method-note{
+    margin:14px 0 0;
+    padding:12px 14px;
+    border-left:4px solid var(--amber);
+    background:#f2e6d0;
+    color:#4c3a21;
+    font-size:13px;
+    line-height:1.45;
+  }
+  .status{
+    display:inline-block;
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:2px 7px;
+    font-family:var(--mono);
+    font-size:11px;
+    white-space:nowrap;
+  }
+  .status.established{
+    background:#e4ebe0;
+    color:var(--growler);
+    border-color:#c8d7c1;
+  }
+  .status.early{
+    background:#f2e6d0;
+    color:var(--sixpack);
+    border-color:#e2cda9;
+  }
+  .status.limited{
+    background:#eeeae1;
+    color:#6b6558;
+  }
 
   footer{
     max-width:1100px;
@@ -280,13 +312,22 @@
           <th data-key="growlers" class="num sortable">Growlers</th>
           <th data-key="sixpacks" class="num sortable">6-Packs</th>
           <th data-key="volume" class="num sortable sorted">Total Volume (L)</th>
-          <th data-key="weeks" class="num sortable">Active Weeks</th>
+          <th data-key="weeks" class="num sortable">Weeks Offered</th>
           <th data-key="avgVolWeek" class="num sortable">Avg Vol/Week (L)</th>
+          <th data-key="avgWeeklyShare" class="num sortable">Avg Weekly Share</th>
+          <th data-key="popularityScore" class="num sortable sorted">Popularity Score</th>
+          <th data-key="dataStatus" class="sortable">Data Status</th>
         </tr>
       </thead>
       <tbody></tbody>
       <tfoot></tfoot>
     </table>
+    <p class="method-note">
+      <strong>Popularity Score</strong> combines a beer’s average share of weekly
+      requested volume while offered with a mild adjustment for the number of weeks
+      it was offered. A beer-week is counted as offered when the request log records
+      one or more requests for that beer in that ISO week.
+    </p>
   </section>
 
   <section id="view-raw" class="view">
@@ -322,6 +363,43 @@ const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=
 
 const GROWLER_L = 1.95;
 const SIXPACK_L = 6 * 0.345; // 2.07
+
+// 0.50 is a square-root availability adjustment: a modest reward for a
+// longer demonstrated record without overwhelming a strong limited release.
+const AVAILABILITY_EXPONENT = 0.50;
+const EARLY_SIGNAL_WEEKS = 4;
+const ESTABLISHED_WEEKS = 8;
+
+function escapeHTML(value){
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function getDataStatus(weeksOffered){
+  if(weeksOffered >= ESTABLISHED_WEEKS){
+    return {
+      label: "Established",
+      cssClass: "established",
+      description: "Eight or more weeks offered"
+    };
+  }
+  if(weeksOffered >= EARLY_SIGNAL_WEEKS){
+    return {
+      label: "Early signal",
+      cssClass: "early",
+      description: "Four to seven weeks offered"
+    };
+  }
+  return {
+    label: "Limited data",
+    cssClass: "limited",
+    description: "Fewer than four weeks offered"
+  };
+}
 
 let ROWS = []; // parsed request rows
 let currentBeerFilter = "";
@@ -408,7 +486,7 @@ async function loadData(){
       rows.push({ beer, growlers, sixpacks, date: dt, dateStr: fmtMDY(dt), isoYear, isoWeek, isoYearWk, volume });
     }
 
-    if(!rows.length) throw new Error("No valid rows found in columns C–F");
+    if(!rows.length) throw new Error("No valid rows found: expected beer, growlers, 6-packs, and date.");
 
     ROWS = rows;
     statusEl.textContent = `${rows.length} requests · updated ${new Date().toLocaleTimeString()}`;
@@ -432,7 +510,7 @@ function updateBeerFilterOptions(){
     beers = [...new Set(ROWS.map(r => r.beer))].sort();
   }
   sel.innerHTML = '<option value="">All beers</option>' +
-    beers.map(b => `<option value="${b}">${b}</option>`).join('');
+    beers.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('');
   if(beers.includes(currentBeerFilter)){
     sel.value = currentBeerFilter;
   } else {
@@ -490,7 +568,7 @@ function renderWeekly(){
 
   tbody.innerHTML = beerList.map(([beer, s]) => `
     <tr>
-      <td class="beer">${beer}</td>
+      <td class="beer">${escapeHTML(beer)}</td>
       <td class="num">${s.requests}</td>
       <td class="num">${s.growlers}</td>
       <td class="num">${s.sixpacks}</td>
@@ -520,42 +598,109 @@ function renderWeekly(){
 }
 
 // ---------- By Beer (All-Time) ----------
-let byBeerSort = { key:'volume', dir:-1 };
+let byBeerSort = { key:'popularityScore', dir:-1 };
 function renderByBeer(){
   const rows = filteredRows();
+
+  // Use every beer in ROWS for the weekly denominator, even when the Beer
+  // filter is set. This keeps any selected beer comparable to the full taplist.
+  const totalVolumeByWeek = {};
+  for(const r of ROWS){
+    totalVolumeByWeek[r.isoYearWk] =
+      (totalVolumeByWeek[r.isoYearWk] || 0) + r.volume;
+  }
+
   const agg = {};
   for(const r of rows){
-    if(!agg[r.beer]) agg[r.beer] = { requests:0, growlers:0, sixpacks:0, volume:0, weeks:new Set() };
+    if(!agg[r.beer]){
+      agg[r.beer] = {
+        requests: 0,
+        growlers: 0,
+        sixpacks: 0,
+        volume: 0,
+        weeks: new Set(),
+        volumeByWeek: {}
+      };
+    }
     const a = agg[r.beer];
-    a.requests++; a.growlers += r.growlers; a.sixpacks += r.sixpacks; a.volume += r.volume; a.weeks.add(r.isoYearWk);
+    a.requests += 1;
+    a.growlers += r.growlers;
+    a.sixpacks += r.sixpacks;
+    a.volume += r.volume;
+    a.weeks.add(r.isoYearWk);
+    a.volumeByWeek[r.isoYearWk] =
+      (a.volumeByWeek[r.isoYearWk] || 0) + r.volume;
   }
-  let list = Object.entries(agg).map(([beer, a]) => ({
-    beer, requests:a.requests, growlers:a.growlers, sixpacks:a.sixpacks, volume:a.volume, weeks:a.weeks.size,
-    avgVolWeek: a.volume / a.weeks.size
-  }));
+
+  let list = Object.entries(agg).map(([beer, a]) => {
+    const weeksOffered = a.weeks.size;
+    const weeklyShares = Object.entries(a.volumeByWeek).map(([week, volume]) => {
+      const totalWeeklyVolume = totalVolumeByWeek[week] || 0;
+      return totalWeeklyVolume > 0 ? volume / totalWeeklyVolume : 0;
+    });
+    const avgWeeklyShare = weeklyShares.length
+      ? weeklyShares.reduce((sum, share) => sum + share, 0) / weeklyShares.length
+      : 0;
+    const status = getDataStatus(weeksOffered);
+    return {
+      beer,
+      requests: a.requests,
+      growlers: a.growlers,
+      sixpacks: a.sixpacks,
+      volume: a.volume,
+      weeks: weeksOffered,
+      avgVolWeek: weeksOffered ? a.volume / weeksOffered : 0,
+      avgWeeklyShare,
+      dataStatus: status.label,
+      dataStatusClass: status.cssClass,
+      dataStatusDescription: status.description
+    };
+  });
+
+  const maxWeeksOffered = Math.max(...list.map(a => a.weeks), 1);
+  list = list.map(a => {
+    const availabilityAdjustment = Math.pow(
+      a.weeks / maxWeeksOffered,
+      AVAILABILITY_EXPONENT
+    );
+    return {
+      ...a,
+      availabilityAdjustment,
+      popularityScore: a.avgWeeklyShare * 100 * availabilityAdjustment
+    };
+  });
 
   list.sort((a,b) => {
     const k = byBeerSort.key;
     if(typeof a[k] === 'string') return a[k].localeCompare(b[k]) * byBeerSort.dir;
-    return (a[k]-b[k]) * byBeerSort.dir;
+    return (a[k] - b[k]) * byBeerSort.dir;
   });
 
   const tbody = document.querySelector('#byBeerTable tbody');
   const tfoot = document.querySelector('#byBeerTable tfoot');
   tbody.innerHTML = list.map(a => `
     <tr>
-      <td class="beer">${a.beer}</td>
+      <td class="beer">${escapeHTML(a.beer)}</td>
       <td class="num">${a.requests}</td>
       <td class="num">${a.growlers}</td>
       <td class="num">${a.sixpacks}</td>
       <td class="num">${a.volume.toFixed(2)}</td>
       <td class="num">${a.weeks}</td>
       <td class="num">${a.avgVolWeek.toFixed(2)}</td>
+      <td class="num">${(a.avgWeeklyShare * 100).toFixed(2)}%</td>
+      <td class="num">${a.popularityScore.toFixed(2)}</td>
+      <td title="${escapeHTML(a.dataStatusDescription)}">
+        <span class="status ${a.dataStatusClass}">${a.dataStatus}</span>
+      </td>
     </tr>`).join('');
 
   const totals = list.reduce((t,a) => ({
-    requests:t.requests+a.requests, growlers:t.growlers+a.growlers, sixpacks:t.sixpacks+a.sixpacks, volume:t.volume+a.volume
-  }), {requests:0,growlers:0,sixpacks:0,volume:0});
+    requests: t.requests + a.requests,
+    growlers: t.growlers + a.growlers,
+    sixpacks: t.sixpacks + a.sixpacks,
+    volume: t.volume + a.volume
+  }), {requests:0, growlers:0, sixpacks:0, volume:0});
+
   tfoot.innerHTML = `
     <tr>
       <td>Total</td>
@@ -565,6 +710,9 @@ function renderByBeer(){
       <td class="num">${totals.volume.toFixed(2)}</td>
       <td class="num">—</td>
       <td class="num">—</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+      <td>—</td>
     </tr>`;
 
   document.querySelectorAll('#byBeerTable thead th').forEach(th => {
@@ -602,7 +750,7 @@ function renderRaw(){
     <tr>
       <td>${r.dateStr}</td>
       <td>${r.isoYearWk}</td>
-      <td class="beer">${r.beer}</td>
+      <td class="beer">${escapeHTML(r.beer)}</td>
       <td class="num">${r.growlers}</td>
       <td class="num">${r.sixpacks}</td>
       <td class="num">${r.volume.toFixed(2)}</td>
