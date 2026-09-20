@@ -1,1 +1,24 @@
-“For this analysis, a beer is counted as offered in an ISO week when at least one customer request for that beer appears in the public request log. At Olde Cellar, every beer placed on tap receives at least one request during each week it is on tap.”
+“For this analysis, a beer is counted as offered in an ISO week when at least one customer request for that beer appears in the public request log. 
+At Olde Cellar, every beer placed on tap receives at least one request during each week it is on tap.”
+
+
+Availability-Adjusted Popularity Score directly into the “By Beer (All-Time)” view.
+Included changes
+The updated file includes:
+	A Popularity Score calculated as:
+100×"average weekly volume share"×("weeks offered" /"maximum weeks offered" )^0.5
+
+	New sortable report columns:
+	Weeks Offered
+	Average Volume per Week
+	Average Weekly Share
+	Popularity Score
+	Data Status
+	Default ranking by Popularity Score, highest first.
+	A Limited data / Early signal / Established confidence label based on 1–3, 4–7, and 8+ weeks offered.
+	A short on-page methodology note explaining the availability convention: a beer-week is counted as offered when it has at least one request in that ISO week.
+	HTML escaping for beer names pulled from the public Google Sheet.
+	A clearer error message if the expected four source columns cannot be read.
+Important implementation detail
+The score calculation deliberately uses the total volume for all beers in each week as the weekly denominator—even if the Beer filter is set to one beer. That means filtering the display cannot artificially raise a beer’s share or score.
+The score is also based on your stated operational rule that any beer on tap receives at least one request during every week it is on tap. Under that rule, recorded active weeks are valid weeks offered.
