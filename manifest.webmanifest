@@ -1,0 +1,19 @@
+
+{
+  "name": "Bellvale Beer Request",
+  "short_name": "Beer Request",
+  "description": "Submit a Bellvale beer request",
+  "start_url": "/OldeCellarRequests/",
+  "scope": "/OldeCellarRequests/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "bellvle-beer-request-icon.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
