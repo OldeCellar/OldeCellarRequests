@@ -69,5 +69,16 @@
       Open Beer Request Form
     </a>
   </main>
+  
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register(
+        '/OldeCellarRequests/service-worker.js',
+        { scope: '/OldeCellarRequests/' }
+      );
+    });
+  }
+
 </body>
 </html>
